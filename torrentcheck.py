@@ -2,6 +2,7 @@
 import argparse
 import hashlib
 import os
+import sys
 
 import bencodepy
 
@@ -232,5 +233,36 @@ class EmptyFile(object):
         return
 
 
+def check_torrent(torrent_filename, download_dir):
+    with open(torrent_filename, "rb") as f:
+        torrent = _decode(f.read())
+    info = torrent[b'info']
+    ok = verify(info, download_dir)
+    return ok
+
+
+def is_torrent_file(filename):
+    if not os.path.isfile(filename): return False
+    with open(filename, 'rb') as f:
+        b = f.read(1)
+    return b == b'd'
+    
+
+def do_check(argv):
+    """
+    Argument : [torrent_filename, download_dir]
+    """
+    if is_torrent_file(argv[0]):
+        ok = check_torrent(argv[0], argv[1])
+    elif is_torrent_file(argv[1]):
+        ok = check_torrent(argv[1], argv[0])
+    else:
+        ok = check_torrent(argv[0], argv[1])
+    if not ok: raise Exception('Check fail')
+
+
 if __name__ == '__main__':
-    exit(main())
+    if locals().get('do_' + sys.argv[1]):
+        locals()['do_' + sys.argv[1]](sys.argv[2:])
+    else:
+        exit(main())
