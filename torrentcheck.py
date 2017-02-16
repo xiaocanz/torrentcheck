@@ -1,10 +1,9 @@
 #! /usr/bin/env python
 import argparse
 import hashlib
-import itertools
 import os
 
-import bencode
+import bencodepy
 
 parser = argparse.ArgumentParser(
     description='Check the integrity of torrent downloads.')
@@ -24,12 +23,16 @@ parser.add_argument(
     action='store_true',
     help='print traceback and exit when an exception occurs')
 
+gStrEnc = ['utf8', 'gb2312', 'latin']
+
+def _decode(data):
+    return bencodepy.decoder.decode(data)
 
 def main():
     try:
         args = parser.parse_args()
         if not os.path.isdir(args.directory):
-            print '{} is not a directory'.format(args.directory)
+            print('{} is not a directory'.format(args.directory))
             return 2
         if args.delete or args.list_delete:
             cmd = delete_cmd
@@ -38,13 +41,13 @@ def main():
         all_ok = True
         for torrent_path in args.torrent:
             with open(torrent_path, 'rb') as f:
-                torrent = bencode.bdecode(f.read())
-                info = torrent['info']
+                torrent = _decode(f.read())
+                info = torrent[b'info']
                 try:
                     ok = cmd(info, torrent_path, args)
                 except Exception:
                     ok = False
-                    print '{}: ERROR'.format(torrent_path)
+                    print('{}: ERROR'.format(torrent_path))
                     if args.debug:
                         raise
                 all_ok = all_ok and ok
@@ -54,10 +57,12 @@ def main():
 
 
 def delete_cmd(info, torrent_path, args):
+    pass
+    """ Not tested
     if 'files' not in info:
         return True
-    base_path = os.path.join(args.directory, info['name'])
-    paths = set(os.path.join(base_path, *f['path']) for f in info['files'])
+    base_path = os.path.join(args.directory, info[b'name'])
+    paths = set(os.path.join(base_path, *f[b'path']) for f in info[b'files'])
     count = 0
     for dirpath, dirnames, filenames in os.walk(base_path):
         for filename in filenames:
@@ -65,24 +70,63 @@ def delete_cmd(info, torrent_path, args):
             if p not in paths:
                 count += 1
                 if args.list_delete:
-                    print '{}: {}'.format(torrent_path, p)
+                    print('{}: {}'.format(torrent_path, p))
                 if args.delete:
                     os.unlink(p)
     if count == 0:
-        print '{}: OK'.format(torrent_path)
+        print('{}: OK'.format(torrent_path))
     else:
         verb = 'deleted' if args.delete else 'found'
-        print '{}: {} extra file(s) {}'.format(torrent_path, count, verb)
+        print('{}: {} extra file(s) {}'.format(torrent_path, count, verb))
     return True
+    """
 
 
 def verify_cmd(info, torrent_path, args):
     ok = verify(info, args.directory)
     if ok:
-        print '{}: OK'.format(torrent_path)
+        print('{}: OK'.format(torrent_path))
     else:
-        print '{}: FAILED'.format(torrent_path)
+        print('{}: FAILED'.format(torrent_path))
     return ok
+
+
+def _get_base_path(dirpath, bname):
+    for enc in gStrEnc:
+        try:
+            name = bname.decode(enc)
+            path = os.path.join(dirpath, name)
+            if os.path.isdir(path):
+                return path
+        except:
+            pass
+    
+    return dirpath
+
+
+def _get_base_file(dirpath, bname):
+    for enc in gStrEnc:
+        try:
+            name = bname.decode(enc)
+            path = os.path.join(dirpath, name)
+            if os.path.isfile(path):
+                return path
+        except:
+            pass
+    
+    return dirpath
+
+
+def _get_file_path(dirpath, bnames):
+    for enc in gStrEnc:
+        try:
+            filepath = os.path.join(dirpath, *[x.decode(enc) for x in bnames])
+            if os.path.isfile(filepath):
+                return filepath
+        except:
+            pass
+    
+    raise Exception('error')
 
 
 def verify(info, directory_path):
@@ -90,18 +134,19 @@ def verify(info, directory_path):
     computed checksum values of downloaded file(s) in the directory and if
     each file has the correct length as specified in the torrent file.
     """
-    base_path = os.path.join(directory_path, info['name'])
-    if 'length' in info:
-        if os.stat(base_path).st_size != info['length']:
+    if b'length' in info:
+        base_path = _get_base_file(directory_path, info[b'name'])
+        if os.stat(base_path).st_size != info[b'length']:
             return False
         getfile = lambda: open(base_path, 'rb')
     else:
-        assert 'files' in info, 'invalid torrent file'
-        for f in info['files']:
-            p = os.path.join(base_path, *f['path'])
-            if os.stat(p).st_size != f['length']:
+        base_path = _get_base_path(directory_path, info[b'name'])
+        assert b'files' in info, 'invalid torrent file'
+        for f in info[b'files']:
+            p = _get_file_path(base_path, f[b'path'])
+            if os.stat(p).st_size != f[b'length']:
                 return False
-        getfile = lambda: ConcatenatedFile(base_path, info['files'])
+        getfile = lambda: ConcatenatedFile(base_path, info[b'files'])
     with getfile() as f:
         return compare_checksum(info, f)
 
@@ -110,18 +155,18 @@ def compare_checksum(info, f):
     """Return True if the checksum values in the info dictionary match the
     computed checksum values of file content.
     """
-    pieces = info['pieces']
+    pieces = info[b'pieces']
 
     def getchunks(f, size):
         while True:
             chunk = f.read(size)
-            if chunk == '':
+            if chunk == b'':
                 break
             yield hashlib.sha1(chunk).digest()
 
-    calc = getchunks(f, info['piece length'])
-    ref = (pieces[i:i + 20] for i in xrange(0, len(pieces), 20))
-    for expected, actual in itertools.izip(calc, ref):
+    calc = getchunks(f, info[b'piece length'])
+    ref = (pieces[i:i + 20] for i in range(0, len(pieces), 20))
+    for expected, actual in zip(calc, ref):
         if expected != actual:
             return False
     return ensure_empty(calc) and ensure_empty(ref)
@@ -159,7 +204,7 @@ class ConcatenatedFile(object):
 
     def read(self, size):
         if self._i == len(self._files):
-            return ''
+            return b''
         buf = []
         count = 0
         while True:
@@ -170,18 +215,18 @@ class ConcatenatedFile(object):
                 self._i += 1
                 if self._i == len(self._files):
                     break
-                p = os.path.join(self._base, *self._files[self._i]['path'])
+                p = _get_file_path(self._base, self._files[self._i][b'path'])
                 self._f.close()
                 self._f = open(p, 'rb')
             else:
                 break
-        return ''.join(buf)
+        return b''.join(buf)
 
 
 class EmptyFile(object):
 
     def read(self, size):
-        return ''
+        return b''
 
     def close(self):
         return
