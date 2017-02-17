@@ -130,7 +130,7 @@ def _get_file_path(dirpath, bnames):
     raise Exception('error')
 
 
-def verify(info, directory_path):
+def verify(info, directory_path, progressor=None):
     """Return True if the checksum values in the torrent file match the
     computed checksum values of downloaded file(s) in the directory and if
     each file has the correct length as specified in the torrent file.
@@ -149,10 +149,32 @@ def verify(info, directory_path):
                 return False
         getfile = lambda: ConcatenatedFile(base_path, info[b'files'])
     with getfile() as f:
-        return compare_checksum(info, f)
+        return compare_checksum(info, f, progressor)
 
 
-def compare_checksum(info, f):
+class TextProgressor:
+    def __init__(self):
+        self.mark = 40
+    
+    def set_total(self, total):
+        self.total = total
+        if self.total < self.mark:
+            self.mark = self.total
+        self.current = 0
+        self.final = self.mark * self.total
+        self.next = self.total
+        print('-' * self.mark + '\b' * self.mark, end='', flush=True)
+
+    def tick(self):
+        self.current += self.mark
+        if self.current >= self.next:
+            self.next += self.total
+            print('>', end='', flush=True)
+        if self.current == self.final:
+            print('')
+
+
+def compare_checksum(info, f, progressor):
     """Return True if the checksum values in the info dictionary match the
     computed checksum values of file content.
     """
@@ -167,9 +189,11 @@ def compare_checksum(info, f):
 
     calc = getchunks(f, info[b'piece length'])
     ref = (pieces[i:i + 20] for i in range(0, len(pieces), 20))
+    if progressor: progressor.set_total(len(pieces) // 20)
     for expected, actual in zip(calc, ref):
         if expected != actual:
             return False
+        if progressor: progressor.tick()
     return ensure_empty(calc) and ensure_empty(ref)
 
 
@@ -237,7 +261,7 @@ def check_torrent(torrent_filename, download_dir):
     with open(torrent_filename, "rb") as f:
         torrent = _decode(f.read())
     info = torrent[b'info']
-    ok = verify(info, download_dir)
+    ok = verify(info, download_dir, TextProgressor())
     return ok
 
 
