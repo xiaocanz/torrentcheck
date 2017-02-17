@@ -118,7 +118,7 @@ def _get_base_file(dirpath, bname):
     return dirpath
 
 
-def _get_file_path(dirpath, bnames):
+def _get_file_path(dirpath, bnames, length):
     for enc in gStrEnc:
         try:
             filepath = os.path.join(dirpath, *[x.decode(enc) for x in bnames])
@@ -126,7 +126,12 @@ def _get_file_path(dirpath, bnames):
                 return filepath
         except:
             pass
-    
+
+    if length == 0:
+        # accept file not exist if length is 0
+        filepath = os.path.join(dirpath, *[x.decode(gStrEnc[0]) for x in bnames])
+        return filepath
+         
     raise Exception('error')
 
 
@@ -144,8 +149,8 @@ def verify(info, directory_path, progressor=None):
         base_path = _get_base_path(directory_path, info[b'name'])
         assert b'files' in info, 'invalid torrent file'
         for f in info[b'files']:
-            p = _get_file_path(base_path, f[b'path'])
-            if os.stat(p).st_size != f[b'length']:
+            p = _get_file_path(base_path, f[b'path'], f[b'length'])
+            if f[b'length'] and os.stat(p).st_size != f[b'length']:
                 return False
         getfile = lambda: ConcatenatedFile(base_path, info[b'files'])
     with getfile() as f:
@@ -240,9 +245,13 @@ class ConcatenatedFile(object):
                 self._i += 1
                 if self._i == len(self._files):
                     break
-                p = _get_file_path(self._base, self._files[self._i][b'path'])
                 self._f.close()
-                self._f = open(p, 'rb')
+                length = self._files[self._i][b'length']
+                if length == 0:
+                    self._f = EmptyFile()
+                else:
+                    p = _get_file_path(self._base, self._files[self._i][b'path'], length)
+                    self._f = open(p, 'rb')
             else:
                 break
         return b''.join(buf)
